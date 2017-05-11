@@ -1555,7 +1555,7 @@ module RbReadline
     end
 
     if @hConsoleHandle
-      csbi = 0.chr * 24
+      csbi = Fiddle::Pointer.malloc(24)
       @GetConsoleScreenBufferInfo.Call(@hConsoleHandle,csbi)
       x,y = csbi[4,4].unpack('SS')
       x = dpos
@@ -1859,7 +1859,7 @@ module RbReadline
   def _rl_get_screen_size(tty, ignore_env)
 
     if @hConsoleHandle
-      csbi = 0.chr * 24
+      csbi = Fiddle::Pointer.malloc(24)
       @GetConsoleScreenBufferInfo.Call(@hConsoleHandle,csbi)
       wc,wr = csbi[0,4].unpack('SS')
       # wr,wc, = `mode con`.scan(/\d+\n/).map{|x| x.to_i}
@@ -4657,10 +4657,10 @@ module RbReadline
   #   number of character spaces to clear,
   def space_to_eol(count)
     if @hConsoleHandle
-      csbi = 0.chr * 24
+      csbi = Fiddle::Pointer.malloc(24)
       @GetConsoleScreenBufferInfo.Call(@hConsoleHandle,csbi)
       cursor_pos = csbi[4,4].unpack('L').first
-      written = 0.chr * 4
+      written = Fiddle::Pointer.malloc(4)
       @FillConsoleOutputCharacter.Call(@hConsoleHandle,0x20,count,cursor_pos,written)
     else
       @rl_outstream.write(' ' * count)
