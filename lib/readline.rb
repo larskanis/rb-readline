@@ -24,8 +24,8 @@ module Readline
   # Because this is meant as an interactive console interface, they should
   # generally not be redirected.
   #
-  # If you would like to add non-visible characters to the the prompt (for 
-  # example to add colors) you must prepend the character \001 (^A) before 
+  # If you would like to add non-visible characters to the the prompt (for
+  # example to add colors) you must prepend the character \001 (^A) before
   # each sequence of non-visible characters and add the character \002 (^B)
   # after, otherwise line wrapping may not work properly.
   #
@@ -42,7 +42,7 @@ module Readline
     RbReadline.rl_outstream = $stdout
 
     begin
-      buff = RbReadline.readline(prompt)
+      buff = RbReadline.readline(prompt) #&.encode("cp852")
     rescue Exception => e
       buff = nil
       RbReadline.rl_cleanup_after_signal()
