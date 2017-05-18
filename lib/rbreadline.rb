@@ -2444,6 +2444,7 @@ module RbReadline
     rl_bind_keyseq_if_unbound("\033[D", :rl_backward_char)
     rl_bind_keyseq_if_unbound("\033[H", :rl_beg_of_line)
     rl_bind_keyseq_if_unbound("\033[F", :rl_end_of_line)
+    rl_bind_keyseq_if_unbound("\033[3~", :rl_delete)
 
     rl_bind_keyseq_if_unbound("\033OA", :rl_get_previous_history)
     rl_bind_keyseq_if_unbound("\033OB", :rl_get_next_history)
