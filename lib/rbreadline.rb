@@ -8245,7 +8245,35 @@ module RbReadline
     [ 0xE0100, 0xE01EF ]
   ]
 
+  if RUBY_PLATFORM=~/mingw|mswin/
+    # Generated per getcharwidth_windows.rb:
+    WINDOWS_WCWIDTHS_PACKED = <<-EOT
+eJzt3YuSmjAUANBJ/v+f7TiaF5CAgFbcc2bWKoSE3DyEhm1vt7HwHWKs3sQQ
+h4nvyQ7uv6Y40U23IavLhahf3VMzivnlSBGj0qeN2Dbm9v0hhlmy5/gJ5Yj6
+VOJC9i+6XLcBAAD+jKP3O1f3v+MPAACwhbuXE0xW7B7Lm891wudPHehYLcUv
+ZpcTpDzSTea595u9rJZucVdueMebYifdI6t29fRR1Nr5DO/Ej8dovAQ7j0du
+4cl6cCwnkw5JScY9YFJeeu3Va7RvVM7KntVDmrrUDd7UtXwOdV9qt+ZN4flH
+SO8e+eSU6V1IKZq2qAvv9ZGmsyw8DLC4NTVzPsk6jw0BO9AjOxX5KqWizbQX
+y7MSC/vymKkPP8vS2ZV9nXfr4+jM5tiYWy44pAe32t3z9LEdGmU8paYIOdSH
+K/EmYT4/vKsZYm6JlG/6VJffL/lrY/hhJTKzGM3ClqeHyfSf++5kioizvJt5
+Y2mMHh7Ak7Tt934vvzxWy7VAzJtC+TIvyQc9ax6xKmX3+m2pwosnvjTZzafG
+2PbwXMHUMOPZqN69JfYhVFmW1p9UJuUU+oOv7Y0pum2UJydUHdEN5QUezqua
+KIQ2do/XQaP38grV1/i8k1P0+k83xodDOBhMq8Ntr23lX9m2eJ9R/zcF8GMN
+81oneHuHeen7feupH+jvPzo+sl+vHwAAAAAAAJfw6+vXAAAAAAAAAAAAAAAA
+AAAAAAAAAADf7uj/yggAwF4u0/hmH7ohAQAAAAAAAAAAAIA/Y8Pzurse5b0f
+dAMA/pz2gmD3pcQ5crl+Q+mz7mEeRzoMPo0zzs24qyl7PWB3hiv5AlyMyQwA
+eFF19+dCAgCA7OhfM73xH7Lb6bmQAD9hbb23TrvU75fGav1hyyDvbXtXnQ85
+NqFtiMZXVK+z73b7B+2F8mw=
+    EOT
+
+    require "zlib"
+    WINDOWS_WCWIDTHS = Zlib.inflate(WINDOWS_WCWIDTHS_PACKED.unpack("m")[0]).unpack("C*")
+  end
+
   def wcwidth(ucs)
+    w = WINDOWS_WCWIDTHS && WINDOWS_WCWIDTHS[ucs]
+    return w if w && w != 0xff
+
     # test for 8-bit control characters
     if ucs == 0
       return 0
