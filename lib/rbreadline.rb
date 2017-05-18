@@ -1508,9 +1508,22 @@ module RbReadline
   #   DATA is the contents of the screen line of interest; i.e., where
   #   the movement is being done.
   def _rl_move_cursor_relative(new, data, start=0)
+    woff = w_offset(@_rl_last_v_pos, @wrap_offset)
     cpos = @_rl_last_c_pos
 
-    dpos = new
+    dpos = _rl_col_width(data, start, start+new)
+
+    # Use NEW when comparing against the last invisible character in the
+    # prompt string, since they're both buffer indices and DPOS is a desired
+    # display position.
+    if (new > @prompt_last_invisible)     # XXX - don't use woff here
+      dpos -= woff
+      # Since this will be assigned to _rl_last_c_pos at the end (more
+      #   precisely, _rl_last_c_pos == dpos when this function returns),
+      #   let the caller know.
+      @cpos_adjusted = true
+    end
+
     # If we don't have to do anything, then return.
     if cpos == dpos
       return
@@ -1555,7 +1568,12 @@ module RbReadline
       # in the buffer and we have to go back to the beginning of the screen
       # line.  In this case, we can use the terminal sequence to move forward
       # if it's available.
-      @rl_outstream.write(data[start+cpos,new-cpos])
+      if (@_rl_term_forward_char)
+        @rl_outstream.write(@_rl_term_forward_char * (dpos-cpos))
+      else
+        @rl_outstream.write(@_rl_term_cr)
+        @rl_outstream.write(data[start,new])
+      end
     elsif (cpos > dpos)
       _rl_backspace(cpos - dpos)
     end
@@ -1623,16 +1641,6 @@ module RbReadline
   #   the returned string all characters except those between \001 and
   #   \002 are assumed to be `visible'.
   def expand_prompt(pmt)
-    # Short-circuit if we can.
-    if pmt[RL_PROMPT_START_IGNORE].nil?
-      r = pmt.dup
-      lp = r.length
-      lip = 0
-      niflp = 0
-      vlp = lp
-      return [r,lp,lip,niflp,vlp]
-    end
-
     l = pmt.length
     ret = ''
     invfl = 0    # invisible chars in first line of prompt
@@ -1658,15 +1666,10 @@ module RbReadline
       else
         ret << pmt[pi]
         if (!ignoring)
-          rl+=1            # visible length byte counter
-          physchars+=1
+          rl += 1
+          physchars += _rl_col_width(pmt, pi, pi + 1)
         else
-          ninvis+=1        # invisible chars byte counter
-        end
-
-        if (invflset == 0 && rl >= @_rl_screenwidth)
-          invfl = ninvis
-          invflset = 1
+          ninvis += 1
         end
       end
     end
@@ -2534,7 +2537,7 @@ module RbReadline
   #   current cursor position is in the middle of a prompt string containing
   #   invisible characters.
   def prompt_ending_index()
-    @prompt_last_invisible+1
+    @prompt_physical_chars
   end
 
   # Initialize the VISIBLE_LINE and INVISIBLE_LINE arrays, and their associated
@@ -2645,9 +2648,37 @@ module RbReadline
     #   the exact cursor position and cut-and-paste with certain terminal
     #   emulators.  In this calculation, TEMP is the physical screen
     #   position of the cursor.
-    temp = @_rl_last_c_pos - w_offset(@_rl_last_v_pos, @visible_wrap_offset)
+    temp = @_rl_last_c_pos
     if (temp == @_rl_screenwidth && @_rl_term_autowrap && !@_rl_horizontal_scroll_mode &&
         @_rl_last_v_pos == current_line - 1)
+
+      # This fixes only double-column characters, but if the wrapped
+      #   character comsumes more than three columns, spaces will be
+      #   inserted in the string buffer.
+      if (@_rl_wrapped_line[current_line] > 0)
+        _rl_clear_to_eol(@_rl_wrapped_line[current_line])
+      end
+
+      if new[0,1] != 0.chr
+        tempwidth = wcwidth(wc.ord)
+      else
+        tempwidth = 0
+      end
+
+      if (tempwidth > 0)
+        @rl_outstream.write(new[0,1])
+        @_rl_last_c_pos = tempwidth
+        @_rl_last_v_pos += 1
+
+        old[ostart,1] = new[0,1]
+      else
+        @rl_outstream.write(' ')
+        @_rl_last_c_pos = 1
+        @_rl_last_v_pos += 1
+        if (old[ostart,1] != 0.chr && new[0,1] != 0.chr)
+          old[ostart,1] = new[0,1]
+        end
+      end
 
       if (new[0,1] != "\0")
         @rl_outstream.write(new[0,1])
@@ -2717,9 +2748,6 @@ module RbReadline
     current_invis_chars = w_offset(current_line, @wrap_offset)
     if (@_rl_last_v_pos != current_line)
       _rl_move_vert(current_line)
-      if current_line == 0 && @visible_wrap_offset!=0
-        @_rl_last_c_pos += @visible_wrap_offset
-      end
     end
 
     # If this is the first line and there are invisible characters in the
@@ -2741,7 +2769,11 @@ module RbReadline
         ofd >= lendiff && @_rl_last_c_pos < prompt_ending_index())
       @rl_outstream.write(@_rl_term_cr)
       _rl_output_some_chars(@local_prompt,0,lendiff)
-      @_rl_last_c_pos = lendiff
+
+      # We take wrap_offset into account here so we can pass correct
+      #   information to _rl_move_cursor_relative.
+      @_rl_last_c_pos = _rl_col_width(@local_prompt, 0, lendiff) - @wrap_offset
+      @cpos_adjusted = true
     end
 
     o_cpos = @_rl_last_c_pos
@@ -2751,12 +2783,21 @@ module RbReadline
     #   multibyte locale.
     _rl_move_cursor_relative(ofd, old, ostart)
 
+    # We need to indicate that the cursor position is correct in the presence
+    # of invisible characters in the prompt string.  Let's see if setting this
+    # when we make sure we're at the end of the drawn prompt string works.
+    if (current_line == 0 &&
+        (@_rl_last_c_pos > 0 || o_cpos > 0) &&
+        @_rl_last_c_pos == @prompt_physical_chars)
+      @cpos_adjusted = true
+    end
+
     # if (len (new) > len (old))
     #   lendiff == difference in buffer
     #   col_lendiff == difference on screen
     #   When not using multibyte characters, these are equal
     lendiff = (nls - nfd) - (ols - ofd)
-    col_lendiff = lendiff
+    col_lendiff = _rl_col_width(new, nfd, nls) - _rl_col_width(old, ostart+ofd, ostart+ols)
 
     # If we are changing the number of invisible characters in a line, and
     #   the spot of first difference is before the end of the invisible chars,
@@ -2764,12 +2805,12 @@ module RbReadline
     if (current_line == 0 && !@_rl_horizontal_scroll_mode &&
         current_invis_chars != @visible_wrap_offset)
       lendiff += @visible_wrap_offset - current_invis_chars
-      col_lendiff = lendiff
+      col_lendiff += @visible_wrap_offset - current_invis_chars
     end
 
     # Insert (diff (len (old), len (new)) ch.
     temp = ne - nfd
-    col_temp = temp
+    col_temp = _rl_col_width(new,nfd,ne)
     if (col_lendiff > 0) # XXX - was lendiff
 
       # Non-zero if we're increasing the number of lines.
@@ -2807,13 +2848,6 @@ module RbReadline
                                            lendiff <= @prompt_visible_length || current_invis_chars==0))
 
           insert_some_chars(new[nfd..-1], lendiff, col_lendiff)
-          @_rl_last_c_pos += col_lendiff
-        elsif old[ostart+ols,1] == "\0" && lendiff > 0
-          # At the end of a line the characters do not have to
-          # be "inserted".  They can just be placed on the screen.
-          # However, this screws up the rest of this block, which
-          # assumes you've done the insert because you can.
-          _rl_output_some_chars(new,nfd, lendiff)
           @_rl_last_c_pos += col_lendiff
         else
           _rl_output_some_chars(new,nfd, temp)
@@ -2869,7 +2903,11 @@ module RbReadline
           # the prompt, we need to adjust _rl_last_c_pos in a multibyte locale
           # to account for the wrap offset and set cpos_adjusted accordingly.
           _rl_output_some_chars(new,nfd, temp)
-          @_rl_last_c_pos += temp
+          @_rl_last_c_pos += _rl_col_width(new,nfd,nfd+temp)
+          if current_line == 0 && @wrap_offset && nfd <= @prompt_last_invisible
+            @_rl_last_c_pos -= @wrap_offset
+            @cpos_adjusted = true
+          end
         end
 
         # Otherwise, print over the existing material.
@@ -2880,10 +2918,15 @@ module RbReadline
           # to account for the wrap offset and set cpos_adjusted accordingly.
           _rl_output_some_chars(new,nfd, temp)
           @_rl_last_c_pos += col_temp      # XXX
+
+          if current_line == 0 && @wrap_offset && nfd <= @prompt_last_invisible
+            @_rl_last_c_pos -= @wrap_offset
+            @cpos_adjusted = true
+          end
         end
 
         lendiff = oe - ne
-        col_lendiff = lendiff
+        col_lendiff = _rl_col_width(old, ostart, ostart+oe) - _rl_col_width(new, 0, ne)
 
         if (col_lendiff!=0)
           if (@_rl_term_autowrap && current_line < inv_botlin)
@@ -3027,7 +3070,19 @@ module RbReadline
       #   probably too much work for the benefit gained.  How many people have
       #   prompts that exceed two physical lines?
       #   Additional logic fix from Edward Catmur <ed@catmur.co.uk>
-      temp = ((newlines + 1) * @_rl_screenwidth)
+      n0 = num
+      temp = @local_prompt_len
+      while (num < temp)
+        z = _rl_col_width(@local_prompt, n0, num)
+        if (z > @_rl_screenwidth)
+          num += 1
+          break
+        elsif (z == @_rl_screenwidth)
+          break
+        end
+        num += 1
+      end
+      temp = num
 
       # Now account for invisible characters in the current line.
       temp += (@local_prompt_prefix.nil? ? ((newlines == 0) ? @prompt_invis_chars_first_line :
@@ -3035,7 +3090,7 @@ module RbReadline
                                             ((newlines == 0) ? @wrap_offset : 0))
 
       @inv_lbreaks[newlines+=1] = temp
-      lpos -= @_rl_screenwidth
+      lpos -= _rl_col_width(@local_prompt, n0, num)
     end
     @prompt_last_screen_line = newlines
 
@@ -3145,13 +3200,34 @@ module RbReadline
         end
       else
 
-        line[out,1] = c
+        _rl_wrapped_multicolumn = 0
+        if (@_rl_screenwidth < lpos + wc_width)
+          for i in lpos ... @_rl_screenwidth
+            # The space will be removed in update_line()
+            line[out,1] = ' '
+            out += 1
+            _rl_wrapped_multicolumn+=1
+            lpos += 1
+            if (lpos >= @_rl_screenwidth)
+              @inv_lbreaks[newlines+=1] = out
+              @_rl_wrapped_line[newlines] = _rl_wrapped_multicolumn
+              lpos = 0
+            end
+          end
+        end
+        if (_in == @rl_point)
+          @cpos_buffer_position = out
+          lb_linenum = newlines
+        end
+        line[out,1] = @rl_line_buffer[_in,1]
         out += 1
-        lpos+=wc_width
-        if lpos >= @_rl_screenwidth
-          @inv_lbreaks[newlines+=1] = out
-          @_rl_wrapped_line[newlines] = _rl_wrapped_multicolumn
-          lpos = 0
+        for i in 0 ... wc_width
+          lpos += 1
+          if (lpos >= @_rl_screenwidth)
+            @inv_lbreaks[newlines+=1] = out
+            @_rl_wrapped_line[newlines] = _rl_wrapped_multicolumn
+            lpos = 0
+          end
         end
       end
 
@@ -3223,7 +3299,7 @@ module RbReadline
               inv_botlin == 0 && @_rl_last_c_pos == out &&
               (@wrap_offset > @visible_wrap_offset) &&
               (@_rl_last_c_pos < @visible_first_line_len))
-            nleft = @_rl_screenwidth + @wrap_offset - @_rl_last_c_pos
+            nleft = @_rl_screenwidth - @_rl_last_c_pos
             if (nleft!=0)
               _rl_clear_to_eol(nleft)
             end
@@ -3255,11 +3331,6 @@ module RbReadline
         changed_screen_line = @_rl_last_v_pos != cursor_linenum
         if (changed_screen_line)
           _rl_move_vert(cursor_linenum)
-          # If we moved up to the line with the prompt using _rl_term_up,
-          # the physical cursor position on the screen stays the same,
-          # but the buffer position needs to be adjusted to account
-          # for invisible characters.
-          @_rl_last_c_pos += @wrap_offset
         end
         # We have to reprint the prompt if it contains invisible
         #   characters, since it's not generally OK to just reprint
@@ -3491,12 +3562,9 @@ module RbReadline
     # Because newlines are also in the string as "\0"s (they are tracked
     # seperately), we need to ignore any "\0"s that lie before _end.
     index = string[_end..-1].index("\0")
-
     str = index ? string[0,index+_end] : string
-    width = 0
 
-    str[start ... _end].codepoints.each {|s| width += wcwidth(s) }
-    width
+    wcswidth(str[start ... _end])
   end
 
   # Write COUNT characters from STRING to the output stream.
@@ -4668,20 +4736,19 @@ module RbReadline
       return (rl_backward_char(-count, key))
     end
     if (count > 0)
-      _end = @rl_point + count
-      lend = @rl_end > 0 ? @rl_end - ((@rl_editing_mode == @vi_mode)?1:0) : @rl_end
-      if (_end > lend)
-        @rl_point = lend
+      point = @rl_point + count
+      if (@rl_end <= point && @rl_editing_mode == @vi_mode)
+        point = @rl_end - 1
+      end
+      if (@rl_point == point)
         rl_ding()
-      else
-        @rl_point = _end
+      end
+      @rl_point = point
+      if (@rl_end < 0)
+        @rl_end = 0
       end
     end
-
-    if (@rl_end < 0)
-      @rl_end = 0
-    end
-    return 0
+    0
   end
 
   # Backwards compatibility.
@@ -4694,17 +4761,18 @@ module RbReadline
     if count < 0
       return rl_forward_char(-count, key)
     end
-    if count > 0
-      if @rl_point < count
+    if (count > 0)
+      point = @rl_point
+      while (count > 0 && point > 0)
+        point = point - 1
+        count-=1
+      end
+      if (count > 0)
         @rl_point = 0
         rl_ding()
       else
-        @rl_point -= count
+        @rl_point = point
       end
-    end
-
-    if @rl_point < 0
-      @rl_point = 0
     end
     0
   end
@@ -5101,7 +5169,7 @@ module RbReadline
     rl_begin_undo_group()
 
     count.times do
-      _rl_insert_char(1, c)
+      rl_insert_text(c)
       if @rl_point < @rl_end
         rl_delete(1, c)
       end
@@ -5958,7 +6026,7 @@ module RbReadline
         printed_len += 2
       else
         @rl_outstream.write(s)
-        printed_len += wcwidth(s.ord)
+        printed_len += wcswidth(s)
       end
 
     end
@@ -6102,10 +6170,7 @@ module RbReadline
     if ctrl_char(string[0,1]) || string[0,1] == RUBOUT
       string.length * 2
     else
-      string.each_char.inject(0) do |sum, char|
-        w = wcwidth( char.ord )
-        sum += w
-      end
+      wcswidth(string)
     end
   end
 
@@ -7641,7 +7706,7 @@ module RbReadline
       _rl_nsearch_abort(cxt)
       return -1
     else
-      _rl_insert_char(1, c)
+      rl_insert_text(c)
     end
 
     send(@rl_redisplay_function)
@@ -8211,6 +8276,12 @@ module RbReadline
     end
   end
 
+  def wcswidth(str)
+    return 0 unless str
+    str.each_char.inject(0) do |s, c|
+      s + wcwidth(c.ord)
+    end
+  end
 
 
   module_function :rl_attempted_completion_function,:rl_deprep_term_function,
