@@ -3993,11 +3993,11 @@ module RbReadline
 
       @rl_dispatching = true
       rl_setstate(RL_STATE_DISPATCHING)
-      send(map[key],@rl_numeric_arg * @rl_arg_sign, key)
+      send(func,@rl_numeric_arg * @rl_arg_sign, key)
       rl_unsetstate(RL_STATE_DISPATCHING)
       @rl_dispatching = false
-      if (@rl_pending_input == 0 && map[key] != :rl_digit_argument)
-        @rl_last_func = map[key]
+      if (@rl_pending_input == 0 && func != :rl_digit_argument)
+        @rl_last_func = func
       end
     else
       if map.keys.detect{|x| x =~ /^#{Regexp.escape(key)}/}
