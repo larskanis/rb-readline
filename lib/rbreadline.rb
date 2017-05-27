@@ -4182,7 +4182,7 @@ module RbReadline
 
     def rl_getc(stream)
       begin
-        c = stream.read(1)
+        c = stream.getc
       rescue Errno::EINTR
         c = rl_getc(stream)
       end
