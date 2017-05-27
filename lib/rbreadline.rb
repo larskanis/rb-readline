@@ -2676,7 +2676,7 @@ module RbReadline
         @rl_outstream.write(' ')
         @_rl_last_c_pos = 1
         @_rl_last_v_pos += 1
-        if (old[ostart,1] != 0.chr && new[0,1] != 0.chr)
+        if (old[ostart,1] != "\0" && new[0,1] != "\0")
           old[ostart,1] = new[0,1]
         end
       end
@@ -2705,8 +2705,8 @@ module RbReadline
     # Move to the end of the screen line.  ND and OD are used to keep track
     #   of the distance between ne and new and oe and old, respectively, to
     #   move a subtraction out of each loop.
-    oe = old.index("\0",ostart+ofd) - ostart
-    if oe.nil? || oe>omax
+    oe = old.index("\0",ostart+ofd)
+    if oe.nil? || oe-ostart>omax
       oe = omax
     end
 
