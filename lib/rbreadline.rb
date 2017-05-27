@@ -8269,10 +8269,12 @@ NqFtiMZXVK+z73b7B+2F8mw=
 
     require "zlib"
     WINDOWS_WCWIDTHS = Zlib.inflate(WINDOWS_WCWIDTHS_PACKED.unpack("m")[0]).unpack("C*")
+  else
+    WINDOWS_WCWIDTHS = []
   end
 
   def wcwidth(ucs)
-    w = WINDOWS_WCWIDTHS && WINDOWS_WCWIDTHS[ucs]
+    w = WINDOWS_WCWIDTHS[ucs]
     return w if w && w != 0xff
 
     # test for 8-bit control characters
