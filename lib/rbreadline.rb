@@ -2660,8 +2660,8 @@ module RbReadline
         _rl_clear_to_eol(@_rl_wrapped_line[current_line])
       end
 
-      if new[0,1] != 0.chr
-        tempwidth = wcwidth(wc.ord)
+      if new[0,1] != "\0"
+        tempwidth = wcswidth(new[0,1])
       else
         tempwidth = 0
       end
